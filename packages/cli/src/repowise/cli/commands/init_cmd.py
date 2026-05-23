@@ -949,6 +949,17 @@ def _workspace_init(
     help="Index files, git history, graph, and dead code — skip LLM page generation.",
 )
 @click.option(
+    "--mode",
+    "run_mode",
+    type=click.Choice(["standard", "fast"]),
+    default="standard",
+    help=(
+        "Pipeline depth. 'fast' indexes graph + essential git only (no per-file "
+        "blame, no co-change, no LLM docs) for a quick first pass on very large "
+        "repos; backfill the rest later. Default: standard."
+    ),
+)
+@click.option(
     "--exclude",
     "-x",
     multiple=True,
@@ -1025,6 +1036,7 @@ def init_command(
     reasoning: str | None,
     test_run: bool,
     index_only: bool,
+    run_mode: str,
     exclude: tuple[str, ...],
     commit_limit: int | None,
     follow_renames: bool,
@@ -1038,7 +1050,13 @@ def init_command(
 
     PATH defaults to the current directory.
     Use --index-only to run ingestion (AST, graph, git, dead code) without LLM generation.
+    Use --mode fast for a quick graph + essential-git index of a very large repo.
     """
+    # --mode fast is a graph + essential-git index with no LLM work, so it
+    # implies index-only on the CLI side; the orchestrator mode below switches
+    # the git tier to ESSENTIAL.
+    if run_mode == "fast":
+        index_only = True
     from repowise.cli.ui import (
         BRAND,
         RichProgressCallback,
@@ -1047,6 +1065,7 @@ def init_command(
         build_contextual_next_steps,
         format_elapsed,
         interactive_advanced_config,
+        interactive_fast_mode_offer,
         interactive_mode_select,
         interactive_provider_select,
         load_dotenv,
@@ -1055,6 +1074,7 @@ def init_command(
         print_phase_header,
         print_scan_summary,
         quick_repo_scan,
+        should_offer_fast_mode,
     )
 
     start = time.monotonic()
@@ -1130,6 +1150,10 @@ def init_command(
     # ---- Interactive mode (TTY, no explicit flags) ----
     is_interactive = sys.stdin.isatty() and provider_name is None and not index_only
 
+    # Tiered doc generation cap (set in advanced mode); None = every selected
+    # file page is a full-LLM tier-1 page (unchanged behaviour).
+    tier1_top_n: int | None = None
+
     # Pre-scan for interactive mode — fast stats to inform choices
     scan_info = None
     if is_interactive:
@@ -1141,9 +1165,18 @@ def init_command(
 
         if mode == "index_only":
             index_only = True
+            # On a large repo, an index-only run is exactly the case where the
+            # fast tier (essential git, no blame/co-change) pays off — offer it,
+            # defaulting to yes since docs are already opted out.
+            if (
+                run_mode != "fast"
+                and should_offer_fast_mode(scan_info)
+                and interactive_fast_mode_offer(console, scan_info, default_fast=True)
+            ):
+                run_mode = "fast"
         elif mode == "advanced":
             provider_name, model = interactive_provider_select(console, model, repo_path=repo_path)
-            adv = interactive_advanced_config(console, scan=scan_info)
+            adv = interactive_advanced_config(console, scan=scan_info, allow_fast=True)
             commit_limit = adv["commit_limit"]
             follow_renames = adv["follow_renames"]
             skip_tests = adv["skip_tests"]
@@ -1154,8 +1187,21 @@ def init_command(
             test_run = adv["test_run"]
             embedder_name = adv.get("embedder") or embedder_name
             include_submodules = adv.get("include_submodules", include_submodules)
+            run_mode = adv.get("run_mode", run_mode)
+            tier1_top_n = adv.get("tier1_top_n")
+            if run_mode == "fast":
+                index_only = True
         else:
             provider_name, model = interactive_provider_select(console, model, repo_path=repo_path)
+            # Full mode picked, but on a large repo offer the quick path too.
+            # Default no here — the user explicitly asked for docs.
+            if (
+                run_mode != "fast"
+                and should_offer_fast_mode(scan_info)
+                and interactive_fast_mode_offer(console, scan_info, default_fast=False)
+            ):
+                run_mode = "fast"
+                index_only = True
 
     editor_options = resolve_editor_setup_options(
         console,
@@ -1267,6 +1313,11 @@ def init_command(
     llm_client = provider if not index_only else decision_provider
 
     from repowise.core.pipeline import PhaseTimingRecorder, run_pipeline
+    from repowise.core.pipeline.modes import OrchestratorMode
+
+    orchestrator_mode = (
+        OrchestratorMode.FAST if run_mode == "fast" else OrchestratorMode.STANDARD
+    )
 
     with Progress(
         SpinnerColumn(),
@@ -1298,6 +1349,7 @@ def init_command(
                 llm_client=llm_client,
                 concurrency=concurrency,
                 test_run=test_run,
+                mode=orchestrator_mode,
                 progress=callback,
             )
         )
@@ -1383,6 +1435,7 @@ def init_command(
             language=language,
             reasoning=resolved_reasoning,
             enable_onboarding=onboarding,
+            tier1_top_n=tier1_top_n,
         )
         if sys.stdin.isatty() and coverage_pct is None and not yes:
             options = compute_coverage_options(
@@ -1792,6 +1845,7 @@ def init_command(
 
         next_steps = build_contextual_next_steps(
             index_only=True,
+            fast_mode=(run_mode == "fast"),
             dead_unreachable=_dc_unreachable,
             dead_unused=_dc_unused,
             hotspot_count=_hotspot_count_final,

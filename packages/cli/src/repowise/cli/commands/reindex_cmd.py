@@ -128,26 +128,39 @@ async def _reindex(repo_path, embedder_name: str, batch_size: int) -> None:
         # Pages
         for i in range(0, len(pages), batch_size):
             batch = pages[i : i + batch_size]
-            for page in batch:
-                try:
-                    text = f"{page.title}\n{page.content}" if page.content else page.title or ""
-                    await vector_store.embed_and_upsert(
-                        page.id,
-                        text,
-                        {
-                            "title": page.title or "",
-                            "page_type": page.page_type or "",
-                            "target_path": page.target_path or "",
-                        },
+            page_items = [
+                (
+                    page.id,
+                    f"{page.title}\n{page.content}" if page.content else page.title or "",
+                    {
+                        "title": page.title or "",
+                        "page_type": page.page_type or "",
+                        "target_path": page.target_path or "",
+                    },
+                )
+                for page in batch
+            ]
+            try:
+                await vector_store.embed_batch(page_items)
+                indexed += len(page_items)
+            except Exception as batch_exc:
+                # Fall back to one-item capped batches so a single bad page
+                # cannot leave the entire reindex batch missing from LanceDB.
+                if failed <= 3:
+                    console.print(
+                        f"[yellow]  Warning: batch embed failed; isolating pages: {batch_exc}[/yellow]"
                     )
-                    indexed += 1
-                except Exception as exc:
-                    failed += 1
-                    if failed <= 3:
-                        console.print(
-                            f"[yellow]  Warning: failed to embed {page.id}: {exc}[/yellow]"
-                        )
-                progress.advance(task)
+                for page_item in page_items:
+                    try:
+                        await vector_store.embed_batch([page_item])
+                        indexed += 1
+                    except Exception as exc:
+                        failed += 1
+                        if failed <= 3:
+                            console.print(
+                                f"[yellow]  Warning: failed to embed {page_item[0]}: {exc}[/yellow]"
+                            )
+            progress.advance(task, advance=len(batch))
 
         # Decision records — embedded into the shared page store under the decision: namespace
         progress.update(task, description="Indexing decisions...")

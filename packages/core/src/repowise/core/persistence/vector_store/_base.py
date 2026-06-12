@@ -18,22 +18,28 @@ __all__ = [
     "EMBED_BATCH_MAX_ITEMS",
     "EMBED_TEXT_MAX_CHARS",
     "VectorStore",
+    "cap_embed_text",
     "cosine_similarity",
     "iter_embed_chunks",
 ]
 
 # One embedder call per chunk of this many items. OpenAI rejects embedding
-# requests past 300k total tokens — a generation level of 275 full wiki
-# pages (~560k tokens) failed in one giant request and silently lost the
-# whole level's embeddings (measured live: 400 max_tokens_per_request).
-# 16 items x EMBED_TEXT_MAX_CHARS worst-case is ~120k tokens, comfortably
-# under the cap and inside the embedder adapters' request timeouts
-# (a 16-page chunk measured at 0.6s against OpenAI).
+# requests past 300k total tokens, while the deployed Ollama/Nomic route times
+# out on much smaller single inputs. Keep both per-call item count and per-input
+# text bounded so one oversized page cannot sink a whole reindex/generation
+# batch.
 EMBED_BATCH_MAX_ITEMS = 16
 
-# Per-input cap (~7.5k tokens): embedding models reject a single input past
-# ~8,192 tokens, and one oversized page must not sink its whole chunk.
-EMBED_TEXT_MAX_CHARS = 30_000
+# Per-input cap: live Hetzner Ollama/Nomic (`nomic-embed-text`, 768 dims)
+# accepted some 10k-char strings but rejected a title + dense repeated-content
+# page until 4k chars on 2026-06-12 ("input length exceeds the context length").
+# Keep the cap shared across batch and single-upsert paths.
+EMBED_TEXT_MAX_CHARS = 4_000
+
+
+def cap_embed_text(text: str) -> str:
+    """Return *text* bounded to one safe embedding-model input."""
+    return text[:EMBED_TEXT_MAX_CHARS]
 
 
 def iter_embed_chunks(
@@ -42,7 +48,7 @@ def iter_embed_chunks(
     """Yield ``(chunk, capped_texts)`` slices sized for one embedder request."""
     for start in range(0, len(items), EMBED_BATCH_MAX_ITEMS):
         chunk = items[start : start + EMBED_BATCH_MAX_ITEMS]
-        yield chunk, [text[:EMBED_TEXT_MAX_CHARS] for _, text, _ in chunk]
+        yield chunk, [cap_embed_text(text) for _, text, _ in chunk]
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -74,7 +80,7 @@ class VectorStore(ABC):
         :meth:`embed_and_upsert` in a loop.
         """
         for page_id, text, metadata in items:
-            await self.embed_and_upsert(page_id, text, metadata)
+            await self.embed_and_upsert(page_id, cap_embed_text(text), metadata)
 
     @abstractmethod
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:

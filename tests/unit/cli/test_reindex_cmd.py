@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -151,3 +152,50 @@ async def test_reindex_uses_capped_batch_embedding_path(
     assert _RecordingVectorStore.calls[0][0][0] == "page-1"
     assert len(_RecordingVectorStore.calls[0][0][1]) > EMBED_TEXT_MAX_CHARS
     assert _RecordingVectorStore.embedded_text_lengths == [EMBED_TEXT_MAX_CHARS]
+
+
+def test_reindex_auto_uses_saved_embedder_config(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("REPOWISE_EMBEDDER", raising=False)
+    monkeypatch.delenv("OLLAMA_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("REPOWISE_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_EMBEDDING_DIMS", raising=False)
+    monkeypatch.delenv("REPOWISE_EMBEDDING_DIMS", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        reindex_cmd,
+        "load_config",
+        lambda _repo_path: {
+            "embedder": "ollama",
+            "embedding_model": "nomic-embed-text",
+            "embedding_dims": 768,
+            "ollama_base_url": "http://127.0.0.1:11434",
+        },
+    )
+
+    resolved = reindex_cmd._resolve_reindex_embedder(tmp_path, "auto")
+
+    assert resolved == "ollama"
+    assert os.environ["OLLAMA_EMBEDDING_MODEL"] == "nomic-embed-text"
+    assert os.environ["REPOWISE_EMBEDDING_MODEL"] == "nomic-embed-text"
+    assert os.environ["OLLAMA_EMBEDDING_DIMS"] == "768"
+    assert os.environ["REPOWISE_EMBEDDING_DIMS"] == "768"
+    assert os.environ["OLLAMA_BASE_URL"] == "http://127.0.0.1:11434"
+
+
+def test_reindex_env_overrides_saved_embedding_model(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", "env-model")
+    monkeypatch.setenv("REPOWISE_EMBEDDING_MODEL", "env-model")
+    monkeypatch.setattr(
+        reindex_cmd,
+        "load_config",
+        lambda _repo_path: {
+            "embedder": "ollama",
+            "embedding_model": "config-model",
+        },
+    )
+
+    resolved = reindex_cmd._resolve_reindex_embedder(tmp_path, "ollama")
+
+    assert resolved == "ollama"
+    assert os.environ["OLLAMA_EMBEDDING_MODEL"] == "env-model"
+    assert os.environ["REPOWISE_EMBEDDING_MODEL"] == "env-model"

@@ -10,6 +10,7 @@ from repowise.core.persistence.vector_store.lancedb_store import (
     _page_ids_in_filter,
     _paths_in_filter,
 )
+from repowise.core.persistence.vector_store._base import EMBED_TEXT_MAX_CHARS
 from repowise.core.persistence.vector_store.pgvector_store import (
     PgVectorStore,
     _summary_payload,
@@ -61,6 +62,16 @@ def _factory(session: _FakeSession):
     return make
 
 
+class _RecordingEmbedder(MockEmbedder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[list[str]] = []
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        return await super().embed(texts)
+
+
 # ---------------------------------------------------------------------------
 # pgvector embed_batch — one executemany, not N round-trips
 # ---------------------------------------------------------------------------
@@ -86,6 +97,24 @@ async def test_pg_embed_batch_empty_is_noop() -> None:
     store = PgVectorStore(_factory(session), MockEmbedder())
     await store.embed_batch([])
     assert session.executed == []
+
+
+async def test_pg_search_caps_query_text_length() -> None:
+    session = _FakeSession()
+    embedder = _RecordingEmbedder()
+    store = PgVectorStore(_factory(session), embedder)
+
+    await store.search("q" * (EMBED_TEXT_MAX_CHARS + 5_000))
+    assert len(embedder.calls[0][0]) == EMBED_TEXT_MAX_CHARS
+    stmt, params = session.executed[0]
+    assert "ORDER BY embedding" in stmt
+    assert params["lim"] == 10
+
+    embedder.calls.clear()
+    session.executed.clear()
+    await store.search_many(["q" * (EMBED_TEXT_MAX_CHARS + 5_000)], limit=3)
+    assert len(embedder.calls[0][0]) == EMBED_TEXT_MAX_CHARS
+    assert session.executed[0][1]["lim"] == 3
 
 
 # ---------------------------------------------------------------------------

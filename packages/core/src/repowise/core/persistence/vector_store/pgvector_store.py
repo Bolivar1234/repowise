@@ -91,7 +91,7 @@ class PgVectorStore(VectorStore):
                 await session.commit()
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
-        q_vecs = await self._embedder.embed([query])
+        q_vecs = await self._embedder.embed([cap_embed_text(query)])
         vec_str = _encode(q_vecs[0])
 
         from sqlalchemy.sql import text as sa_text
@@ -127,7 +127,7 @@ class PgVectorStore(VectorStore):
         """One embedder call for all queries; per-query SELECTs share a session."""
         if not queries:
             return []
-        q_vecs = await self._embedder.embed(list(queries))
+        q_vecs = await self._embedder.embed([cap_embed_text(query) for query in queries])
 
         from sqlalchemy.sql import text as sa_text
 

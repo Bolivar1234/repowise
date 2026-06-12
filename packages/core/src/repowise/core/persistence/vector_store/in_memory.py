@@ -64,7 +64,7 @@ class InMemoryVectorStore(VectorStore):
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
         if not self._store:
             return []
-        q_vecs = await self._embedder.embed([query])
+        q_vecs = await self._embedder.embed([cap_embed_text(query)])
         return self._search_by_vector(q_vecs[0], limit)
 
     async def search_many(self, queries: list[str], limit: int = 10) -> list[list[SearchResult]]:
@@ -73,7 +73,7 @@ class InMemoryVectorStore(VectorStore):
             return []
         if not self._store:
             return [[] for _ in queries]
-        q_vecs = await self._embedder.embed(list(queries))
+        q_vecs = await self._embedder.embed([cap_embed_text(query) for query in queries])
         return [self._search_by_vector(q_vec, limit) for q_vec in q_vecs]
 
     async def delete(self, page_id: str) -> None:

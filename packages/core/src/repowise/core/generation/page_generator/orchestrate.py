@@ -371,7 +371,11 @@ class _GenerationRun:
         async def guarded_named(page_id: str, coro: Any) -> Any:
             try:
                 async with self.semaphore:
-                    result = await coro
+                    timeout = self.config.page_timeout_seconds
+                    if timeout is not None and timeout > 0:
+                        result = await asyncio.wait_for(coro, timeout=timeout)
+                    else:
+                        result = await coro
 
                 if isinstance(result, GeneratedPage):
                     # Summary capture is cheap (string ops) — keep inline so
@@ -394,13 +398,19 @@ class _GenerationRun:
                         embed_items.append(_embed_item(result))
                 return result
             except Exception as exc:
+                timeout = self.config.page_timeout_seconds
+                error = (
+                    f"timed out after {timeout:g}s"
+                    if isinstance(exc, TimeoutError) and timeout is not None
+                    else str(exc)
+                )
                 if self.job_system is not None and self.job_id is not None:
-                    self.job_system.fail_page(self.job_id, page_id, str(exc))
+                    self.job_system.fail_page(self.job_id, page_id, error)
                 log.error(
                     "page_generation_failed",
                     page_id=page_id,
                     level=level,
-                    error=str(exc),
+                    error=error,
                 )
                 return exc  # return as value so gather works
             except BaseException:

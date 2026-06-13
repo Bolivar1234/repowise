@@ -287,6 +287,46 @@ async def test_embedding_latency_does_not_gate_llm_concurrency():
     assert provider.file_page_starts[2] < vector_store.file_page_embed_finishes[0]
 
 
+async def test_page_generation_timeout_fails_page_without_stalling_level(tmp_path):
+    parsed_files, source_map, repo_structure = _make_concurrency_fixture()
+    builder = GraphBuilder()
+    for parsed in parsed_files:
+        builder.add_file(parsed)
+    builder.build()
+
+    config = GenerationConfig(
+        max_tokens=256,
+        token_budget=1000,
+        max_concurrency=2,
+        page_timeout_seconds=0.01,
+        coverage_pct=1.0,
+        max_pages_pct=1.0,
+        cache_enabled=False,
+        jobs_dir=str(tmp_path / "jobs"),
+    )
+    provider = _TrackingProvider(delay=1.0)
+    assembler = ContextAssembler(config)
+    generator = PageGenerator(provider, assembler, config)
+    job_system = JobSystem(tmp_path / "jobs")
+
+    pages = await asyncio.wait_for(
+        generator.generate_all(
+            parsed_files,
+            source_map,
+            builder,
+            repo_structure,
+            "timeout_repo",
+            job_system,
+        ),
+        timeout=20.0,
+    )
+
+    assert pages == []
+    checkpoints = job_system.list_jobs()
+    assert len(checkpoints) == 1
+    assert checkpoints[0].failed_pages > 0
+
+
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------

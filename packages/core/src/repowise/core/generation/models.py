@@ -69,6 +69,9 @@ class GenerationConfig:
         max_concurrency:          asyncio.Semaphore size for parallel calls.
         embed_concurrency:        asyncio.Semaphore size for vector-store writes.
                                   Defaults to max_concurrency.
+        page_timeout_seconds:     Optional per-page generation timeout. When
+                                  set, one stuck provider call fails that page
+                                  instead of stalling the whole level.
         reasoning:                Provider-level reasoning intent.
         cache_enabled:            In-memory SHA256 prompt deduplication.
         staleness_threshold_days: Days before a page is considered stale.
@@ -82,6 +85,7 @@ class GenerationConfig:
     token_budget: int = 48000
     max_concurrency: int = 12
     embed_concurrency: int | None = None
+    page_timeout_seconds: float | None = None
     reasoning: ReasoningMode = "auto"
     cache_enabled: bool = True
     staleness_threshold_days: int = 7

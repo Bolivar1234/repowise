@@ -495,7 +495,13 @@ def init_command(
     # On --resume, continue the prior run's git tier so a resumed fast index
     # doesn't silently fall back to the expensive FULL tier (issue #341). Done
     # before the interactive gate so a resume never re-prompts for the mode.
-    run_mode = effective_run_mode_for_resume(repo_path, run_mode, resume)
+    docs_requested_on_resume = not index_only and (provider_name is not None or model is not None)
+    run_mode = effective_run_mode_for_resume(
+        repo_path,
+        run_mode,
+        resume,
+        docs_requested=docs_requested_on_resume,
+    )
     if run_mode == "fast":
         index_only = True
 

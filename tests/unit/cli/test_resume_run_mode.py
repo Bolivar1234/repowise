@@ -29,6 +29,19 @@ def test_resume_restores_fast_run_mode(tmp_path: Path):
     assert _effective_run_mode_for_resume(tmp_path, "standard", resume=True) == "fast"
 
 
+def test_docs_resume_does_not_inherit_prior_fast_index_only_mode(tmp_path: Path):
+    save_state(tmp_path, {"run_mode": "fast", "git_tier": "essential"})
+    assert (
+        _effective_run_mode_for_resume(
+            tmp_path,
+            "standard",
+            resume=True,
+            docs_requested=True,
+        )
+        == "standard"
+    )
+
+
 def test_resume_keeps_standard_when_prior_was_standard(tmp_path: Path):
     save_state(tmp_path, {"run_mode": "standard", "git_tier": "full"})
     assert _effective_run_mode_for_resume(tmp_path, "standard", resume=True) == "standard"

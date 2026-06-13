@@ -179,16 +179,25 @@ def git_tier_for_run_mode(run_mode: str) -> str:
     return "essential" if run_mode == "fast" else "full"
 
 
-def effective_run_mode_for_resume(repo_path: Path, run_mode: str, resume: bool) -> str:
+def effective_run_mode_for_resume(
+    repo_path: Path,
+    run_mode: str,
+    resume: bool,
+    *,
+    docs_requested: bool = False,
+) -> str:
     """On ``--resume``, continue the git tier the prior run used.
 
     A fast (ESSENTIAL-tier) run resumed *without* re-passing ``--mode fast``
     would otherwise default to STANDARD and silently redo the expensive FULL
     git indexing the first run deliberately skipped (issue #341). We restore
-    the persisted ``run_mode`` unless the user explicitly asked for fast on
-    the resume invocation (in which case fast already wins).
+    the persisted ``run_mode`` unless the user explicitly asked for docs on
+    this resume invocation. In that case, a stale fast/index-only state must not
+    silently turn a full-docs resume back into index-only.
     """
     if not resume or run_mode == "fast":
+        return run_mode
+    if docs_requested:
         return run_mode
     prev = load_state(repo_path).get("run_mode")
     return prev if prev in ("fast", "standard") else run_mode

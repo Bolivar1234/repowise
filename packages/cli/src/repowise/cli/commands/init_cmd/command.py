@@ -113,6 +113,7 @@ def _run_generation_phase(
     tier1_top_n: int | None,
     harvest_decisions: bool,
     wiki_style: str,
+    page_timeout_seconds: float | None,
     coverage_pct: float | None,
     yes: bool,
     dry_run: bool,
@@ -146,6 +147,7 @@ def _run_generation_phase(
         tier1_top_n=tier1_top_n,
         harvest_decisions=harvest_decisions,
         wiki_style=wiki_style,
+        page_timeout_seconds=page_timeout_seconds,
     )
     chosen_pct, _plans, est, gen_config = select_coverage(
         result=result,
@@ -393,6 +395,17 @@ def _run_generation_phase(
         "an interactive full run you'll be prompted; otherwise comprehensive."
     ),
 )
+@click.option(
+    "--page-timeout",
+    "page_timeout_seconds",
+    type=float,
+    default=None,
+    metavar="SECONDS",
+    help=(
+        "Fail and skip one page generation call after SECONDS. "
+        "Default: no per-page timeout."
+    ),
+)
 def init_command(
     path: str | None,
     provider_name: str | None,
@@ -422,6 +435,7 @@ def init_command(
     coverage_pct: float | None,
     harvest_decisions: bool,
     wiki_style: str | None,
+    page_timeout_seconds: float | None,
 ) -> None:
     """Generate wiki documentation for a codebase.
 
@@ -477,6 +491,7 @@ def init_command(
             # Apply the chosen style uniformly across the workspace's repos
             # (no per-repo interactive prompt in the multi-repo flow).
             wiki_style=resolve_style(wiki_style).name,
+            page_timeout_seconds=page_timeout_seconds,
             run_mode=run_mode,
         )
         return
@@ -495,7 +510,13 @@ def init_command(
     # On --resume, continue the prior run's git tier so a resumed fast index
     # doesn't silently fall back to the expensive FULL tier (issue #341). Done
     # before the interactive gate so a resume never re-prompts for the mode.
-    run_mode = effective_run_mode_for_resume(repo_path, run_mode, resume)
+    docs_requested_on_resume = not index_only and (provider_name is not None or model is not None)
+    run_mode = effective_run_mode_for_resume(
+        repo_path,
+        run_mode,
+        resume,
+        docs_requested=docs_requested_on_resume,
+    )
     if run_mode == "fast":
         index_only = True
 
@@ -802,6 +823,7 @@ def init_command(
             tier1_top_n=tier1_top_n,
             harvest_decisions=harvest_decisions,
             wiki_style=wiki_style,
+            page_timeout_seconds=page_timeout_seconds,
             coverage_pct=coverage_pct,
             yes=yes,
             dry_run=dry_run,

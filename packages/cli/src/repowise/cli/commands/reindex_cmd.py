@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import click
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
@@ -9,6 +11,7 @@ from repowise.cli.helpers import (
     console,
     ensure_repowise_dir,
     get_db_url_for_repo,
+    load_config,
     resolve_repo_path,
     run_async,
 )
@@ -42,6 +45,57 @@ def reindex_command(path: str | None, embedder: str, batch_size: int) -> None:
     run_async(_reindex(repo_path, embedder, batch_size))
 
 
+def _config_string(config: dict, key: str) -> str | None:
+    value = config.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _set_env_default(key: str, value: str | None) -> None:
+    if value and not os.environ.get(key):
+        os.environ[key] = value
+
+
+def _resolve_reindex_embedder(repo_path, embedder_name: str) -> str:
+    """Resolve reindex embedder from CLI/env plus saved repo config.
+
+    ``reindex --embedder auto`` documents config-aware detection. Persisted
+    config also needs to supply model/dimension defaults for explicit embedders
+    so an operator shell without the systemd env still rebuilds vectors in the
+    same embedding space used by generation and serving.
+    """
+    config = load_config(repo_path)
+    configured_embedder = _config_string(config, "embedder")
+    resolved = embedder_name
+
+    if embedder_name == "auto":
+        if configured_embedder:
+            resolved = configured_embedder.lower()
+        else:
+            from repowise.cli.providers.embedders import resolve_embedder
+
+            resolved = resolve_embedder(None)
+
+    embedding_model = _config_string(config, "embedding_model")
+    embedding_dims = _config_string(config, "embedding_dims") or _config_string(
+        config, "embedding_dimensions"
+    )
+    ollama_base_url = _config_string(config, "ollama_base_url") or _config_string(
+        config, "embedding_base_url"
+    )
+
+    if resolved == "ollama":
+        _set_env_default("OLLAMA_EMBEDDING_MODEL", embedding_model)
+        _set_env_default("OLLAMA_EMBEDDING_DIMS", embedding_dims)
+        _set_env_default("OLLAMA_BASE_URL", ollama_base_url)
+
+    _set_env_default("REPOWISE_EMBEDDING_MODEL", embedding_model)
+    _set_env_default("REPOWISE_EMBEDDING_DIMS", embedding_dims)
+    return resolved
+
+
 async def _reindex(repo_path, embedder_name: str, batch_size: int) -> None:
     from pathlib import Path
 
@@ -55,10 +109,7 @@ async def _reindex(repo_path, embedder_name: str, batch_size: int) -> None:
 
     # --- Resolve embedder ---
     requested_embedder = embedder_name
-    if embedder_name == "auto":
-        from repowise.cli.commands.init_cmd import _resolve_embedder
-
-        embedder_name = _resolve_embedder(None)
+    embedder_name = _resolve_reindex_embedder(repo_path, embedder_name)
 
     embedder_impl = build_embedder(embedder_name)
     if isinstance(embedder_impl, MockEmbedder) and requested_embedder != "mock":
@@ -128,26 +179,39 @@ async def _reindex(repo_path, embedder_name: str, batch_size: int) -> None:
         # Pages
         for i in range(0, len(pages), batch_size):
             batch = pages[i : i + batch_size]
-            for page in batch:
-                try:
-                    text = f"{page.title}\n{page.content}" if page.content else page.title or ""
-                    await vector_store.embed_and_upsert(
-                        page.id,
-                        text,
-                        {
-                            "title": page.title or "",
-                            "page_type": page.page_type or "",
-                            "target_path": page.target_path or "",
-                        },
+            page_items = [
+                (
+                    page.id,
+                    f"{page.title}\n{page.content}" if page.content else page.title or "",
+                    {
+                        "title": page.title or "",
+                        "page_type": page.page_type or "",
+                        "target_path": page.target_path or "",
+                    },
+                )
+                for page in batch
+            ]
+            try:
+                await vector_store.embed_batch(page_items)
+                indexed += len(page_items)
+            except Exception as batch_exc:
+                # Fall back to one-item capped batches so a single bad page
+                # cannot leave the entire reindex batch missing from LanceDB.
+                if failed <= 3:
+                    console.print(
+                        f"[yellow]  Warning: batch embed failed; isolating pages: {batch_exc}[/yellow]"
                     )
-                    indexed += 1
-                except Exception as exc:
-                    failed += 1
-                    if failed <= 3:
-                        console.print(
-                            f"[yellow]  Warning: failed to embed {page.id}: {exc}[/yellow]"
-                        )
-                progress.advance(task)
+                for page_item in page_items:
+                    try:
+                        await vector_store.embed_batch([page_item])
+                        indexed += 1
+                    except Exception as exc:
+                        failed += 1
+                        if failed <= 3:
+                            console.print(
+                                f"[yellow]  Warning: failed to embed {page_item[0]}: {exc}[/yellow]"
+                            )
+            progress.advance(task, advance=len(batch))
 
         # Decision records — embedded into the shared page store under the decision: namespace
         progress.update(task, description="Indexing decisions...")

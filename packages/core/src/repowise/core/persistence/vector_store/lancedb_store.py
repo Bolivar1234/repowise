@@ -5,7 +5,7 @@ from __future__ import annotations
 from repowise.core.providers.embedding.base import Embedder
 
 from ..search import SearchResult
-from ._base import VectorStore, iter_embed_chunks
+from ._base import VectorStore, cap_embed_text, iter_embed_chunks
 
 __all__ = ["LanceDBVectorStore"]
 
@@ -156,10 +156,11 @@ class LanceDBVectorStore(VectorStore):
 
     async def embed_and_upsert(self, page_id: str, text: str, metadata: dict) -> None:
         await self._ensure_connected()
-        vectors = await self._embedder.embed([text])
+        capped_text = cap_embed_text(text)
+        vectors = await self._embedder.embed([capped_text])
         vector = vectors[0]
         await self._ensure_table(vector)
-        meta = {"content": text, **metadata}
+        meta = {"content": capped_text, **metadata}
         await self._upsert_rows([self._row(page_id, vector, meta)])
 
     async def embed_batch(self, items: list[tuple[str, str, dict]]) -> None:
@@ -222,7 +223,7 @@ class LanceDBVectorStore(VectorStore):
         if self._table is None:
             return []
 
-        q_vecs = await self._embedder.embed([query])
+        q_vecs = await self._embedder.embed([cap_embed_text(query)])
         return await self._search_by_vector([float(v) for v in q_vecs[0]], limit)
 
     async def search_many(self, queries: list[str], limit: int = 10) -> list[list[SearchResult]]:
@@ -232,7 +233,7 @@ class LanceDBVectorStore(VectorStore):
         await self._ensure_connected()
         if self._table is None:
             return [[] for _ in queries]
-        q_vecs = await self._embedder.embed(list(queries))
+        q_vecs = await self._embedder.embed([cap_embed_text(query) for query in queries])
         out: list[list[SearchResult]] = []
         for q_vec in q_vecs:
             try:

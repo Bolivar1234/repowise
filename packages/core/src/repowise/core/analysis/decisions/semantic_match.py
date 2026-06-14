@@ -93,15 +93,19 @@ async def upsert_decision_vector(
     # Best-effort: search visibility / dedup is an enhancement, not a
     # correctness requirement for the SQL record, so a store hiccup is swallowed.
     with contextlib.suppress(Exception):
-        await store.embed_and_upsert(
-            _decision_page_id(decision_id),
-            text,
-            {
-                "title": title or "",
-                "page_type": DECISION_PAGE_TYPE,
-                "target_path": evidence_file or "",
-                "content": text,
-            },
+        await store.embed_batch(
+            [
+                (
+                    _decision_page_id(decision_id),
+                    text,
+                    {
+                        "title": title or "",
+                        "page_type": DECISION_PAGE_TYPE,
+                        "target_path": evidence_file or "",
+                        "content": text,
+                    },
+                )
+            ]
         )
 
 

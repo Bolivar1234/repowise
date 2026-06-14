@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from repowise.core.providers.embedding.base import Embedder
 
 from ..search import SearchResult
-from ._base import VectorStore, iter_embed_chunks
+from ._base import VectorStore, cap_embed_text, iter_embed_chunks
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -58,7 +58,7 @@ class PgVectorStore(VectorStore):
         self._embedder = embedder
 
     async def embed_and_upsert(self, page_id: str, text: str, metadata: dict) -> None:
-        vectors = await self._embedder.embed([text])
+        vectors = await self._embedder.embed([cap_embed_text(text)])
         vec_str = _encode(vectors[0])
 
         from sqlalchemy.sql import text as sa_text
@@ -91,7 +91,7 @@ class PgVectorStore(VectorStore):
                 await session.commit()
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
-        q_vecs = await self._embedder.embed([query])
+        q_vecs = await self._embedder.embed([cap_embed_text(query)])
         vec_str = _encode(q_vecs[0])
 
         from sqlalchemy.sql import text as sa_text
@@ -127,7 +127,7 @@ class PgVectorStore(VectorStore):
         """One embedder call for all queries; per-query SELECTs share a session."""
         if not queries:
             return []
-        q_vecs = await self._embedder.embed(list(queries))
+        q_vecs = await self._embedder.embed([cap_embed_text(query) for query in queries])
 
         from sqlalchemy.sql import text as sa_text
 

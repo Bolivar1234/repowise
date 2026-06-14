@@ -89,6 +89,15 @@ def _drive_advanced_config(
 
 
 def test_advanced_config_default_keys_no_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OLLAMA_EMBEDDING_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
     result = _drive_advanced_config(monkeypatch, scan=None, allow_fast=False)
     assert result == {
         "skip_tests": False,

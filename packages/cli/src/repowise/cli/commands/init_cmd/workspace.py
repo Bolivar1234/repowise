@@ -89,6 +89,7 @@ def _run_workspace_generation(
     coverage_pct: float | None = None,
     harvest_decisions: bool = True,
     wiki_style: str = DEFAULT_STYLE,
+    page_timeout_seconds: float | None = None,
 ) -> list[Any]:
     """Run LLM generation for a single repo in the workspace init flow.
 
@@ -105,6 +106,7 @@ def _run_workspace_generation(
         enable_onboarding=onboarding,
         harvest_decisions=harvest_decisions,
         wiki_style=wiki_style,
+        page_timeout_seconds=page_timeout_seconds,
     )
     chosen_pct, _plans, est, gen_config = select_coverage(
         result=result,
@@ -184,6 +186,7 @@ class _WorkspaceCtx:
     coverage_pct: float | None
     harvest_decisions: bool
     wiki_style: str
+    page_timeout_seconds: float | None
     resolved_reasoning: str
     embedder_name_resolved: str
     resolved_commit_limit: int
@@ -294,6 +297,7 @@ def _ingest_and_generate_repo(repo: Any, idx: int, total: int, ctx: _WorkspaceCt
                     coverage_pct=ctx.coverage_pct,
                     harvest_decisions=ctx.harvest_decisions,
                     wiki_style=ctx.wiki_style,
+                    page_timeout_seconds=ctx.page_timeout_seconds,
                 )
                 result.generated_pages = generated_pages
                 # (result.vector_store is set inside _run_workspace_generation
@@ -424,6 +428,7 @@ def _workspace_init(
     coverage_pct: float | None = None,
     harvest_decisions: bool = True,
     wiki_style: str = DEFAULT_STYLE,
+    page_timeout_seconds: float | None = None,
     run_mode: str = "standard",
 ) -> None:
     """Multi-repo workspace initialization.
@@ -581,6 +586,7 @@ def _workspace_init(
         coverage_pct=coverage_pct,
         harvest_decisions=harvest_decisions,
         wiki_style=wiki_style,
+        page_timeout_seconds=page_timeout_seconds,
         resolved_reasoning=resolved_reasoning,
         embedder_name_resolved=embedder_name_resolved,
         resolved_commit_limit=resolved_commit_limit,

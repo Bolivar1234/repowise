@@ -272,8 +272,8 @@ class _GenerationRun:
         layer_page_count = 0
         if self.kg_ctx.available:
             layer_page_count = sum(
-                1 for l in self.kg_ctx.get_layers()
-                if len([n for n in l.get("nodeIds", []) if n.startswith("file:")]) >= 3
+                1 for layer in self.kg_ctx.get_layers()
+                if len([n for n in layer.get("nodeIds", []) if n.startswith("file:")]) >= 3
             )
         estimated_total = (
             counts["api_contract"]
@@ -367,11 +367,15 @@ class _GenerationRun:
         # embedder round-trip and the level drains before the next level's RAG
         # search runs, so there is no freshness regression.
         embed_items: list[tuple[str, str, dict]] = []
+        page_timeout = getattr(getattr(self, "config", None), "page_timeout_seconds", None)
 
         async def guarded_named(page_id: str, coro: Any) -> Any:
             try:
                 async with self.semaphore:
-                    result = await coro
+                    if page_timeout is not None and page_timeout > 0:
+                        result = await asyncio.wait_for(coro, timeout=page_timeout)
+                    else:
+                        result = await coro
 
                 if isinstance(result, GeneratedPage):
                     # Summary capture is cheap (string ops) — keep inline so
@@ -388,19 +392,24 @@ class _GenerationRun:
                     if self.on_page_ready is not None:
                         try:
                             self.on_page_ready(result)
-                        except Exception as exc:  # noqa: BLE001
+                        except Exception as exc:
                             log.debug("on_page_ready.failed", error=str(exc))
                     if self.vector_store is not None:
                         embed_items.append(_embed_item(result))
                 return result
             except Exception as exc:
+                error = (
+                    f"timed out after {page_timeout:g}s"
+                    if isinstance(exc, TimeoutError) and page_timeout is not None
+                    else str(exc)
+                )
                 if self.job_system is not None and self.job_id is not None:
-                    self.job_system.fail_page(self.job_id, page_id, str(exc))
+                    self.job_system.fail_page(self.job_id, page_id, error)
                 log.error(
                     "page_generation_failed",
                     page_id=page_id,
                     level=level,
-                    error=str(exc),
+                    error=error,
                 )
                 return exc  # return as value so gather works
             except BaseException:

@@ -58,6 +58,8 @@ class _FakeAsyncClient:
 def _reset_fake_client(monkeypatch: pytest.MonkeyPatch):
     _FakeAsyncClient.calls = []
     _FakeAsyncClient.response_data = {"embeddings": [[1.0, 0.0]]}
+    monkeypatch.delenv("OLLAMA_EMBEDDING_DIMS", raising=False)
+    monkeypatch.delenv("REPOWISE_EMBEDDING_DIMS", raising=False)
     monkeypatch.setattr(
         "repowise.core.providers.embedding.ollama.httpx.AsyncClient",
         _FakeAsyncClient,

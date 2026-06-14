@@ -8,7 +8,9 @@ re-implementing LanceDB rehydration / lazy caching.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -107,13 +109,25 @@ def _resolve_embedder(app):
     primary store doesn't expose one — keeps semantic search "working"
     against LanceDB stores built with the mock embedder during tests.
     """
-    primary_vs = getattr(app.state, "vector_store", None)
-    embedder = getattr(primary_vs, "_embedder", None) if primary_vs else None
-    if embedder is None:
-        from repowise.core.providers.embedding.base import MockEmbedder
+    from repowise.core.providers.embedding.base import MockEmbedder
 
-        embedder = MockEmbedder()
-    return embedder
+    primary_vs = getattr(app.state, "vector_store", None)
+    embedder = getattr(primary_vs, "_embedder", None) if primary_vs is not None else None
+    if embedder is not None and not isinstance(embedder, MockEmbedder):
+        return embedder
+
+    configured = os.environ.get("REPOWISE_EMBEDDER", "").strip().lower()
+    if configured and configured != "mock":
+        try:
+            from repowise.server.app import _build_embedder
+
+            resolved = _build_embedder()
+            if not isinstance(resolved, MockEmbedder):
+                return resolved
+        except Exception:
+            logger.debug("configured_embedder_resolution_failed", exc_info=True)
+
+    return embedder or MockEmbedder()
 
 
 async def close_workspace_vector_stores(app) -> None:
@@ -122,8 +136,6 @@ async def close_workspace_vector_stores(app) -> None:
     if not cache:
         return
     for store in list(cache.values()):
-        try:
+        with contextlib.suppress(Exception):
             await store.close()
-        except Exception:
-            pass
     cache.clear()

@@ -23,6 +23,27 @@ def _check(name: str, ok: bool, detail: str = "") -> tuple[str, str, str]:
     return (name, status, detail)
 
 
+def _page_ids_from_rows(pages: object) -> set[str]:
+    return {p.id for p in pages}
+
+
+def _store_diff(
+    sql_ids: set[str],
+    store_ids: set[str] | None,
+    *,
+    valid_orphan_ids: set[str] | None = None,
+) -> tuple[set[str], set[str]]:
+    """Return missing/orphaned ids for a secondary store.
+
+    ``None`` means the store was unavailable and should not fail doctor.
+    An empty set means the store was available but empty, which is drift.
+    """
+    if store_ids is None:
+        return set(), set()
+    valid_ids = valid_orphan_ids or sql_ids
+    return sql_ids - store_ids, store_ids - valid_ids
+
+
 async def _decision_vector_ids(session, repository_id: str) -> set[str]:
     """Vector-store ids for this repo's decision records.
 
@@ -247,7 +268,7 @@ def _run_repo_checks(repo_path: _DoctorPath, repair: bool) -> bool:
                         await engine.dispose()
                         return set(), set(), set(), set()
                     pages = await list_pages(session, repo.id, limit=10000)
-                    sql_ids = {p.page_id for p in pages}
+                    sql_ids = _page_ids_from_rows(pages)
                     # The page vector store also holds decision embeddings under
                     # the "decision:<id>" namespace, so they belong on the SQL
                     # side of the ORPHAN check (but NOT FTS, which only indexes
@@ -258,7 +279,7 @@ def _run_repo_checks(repo_path: _DoctorPath, repair: bool) -> bool:
                     vector_sql_ids = sql_ids | await _decision_vector_ids(session, repo.id)
 
                 # Check vector store
-                vs_ids: set[str] = set()
+                vs_ids: set[str] | None = None
                 lance_dir = repowise_dir / "lancedb"
                 if lance_dir.exists():
                     try:
@@ -269,17 +290,19 @@ def _run_repo_checks(repo_path: _DoctorPath, repair: bool) -> bool:
                     except Exception:
                         pass  # LanceDB not available
 
-                m_vec = sql_ids - vs_ids if vs_ids else set()
-                o_vec = vs_ids - vector_sql_ids if vs_ids else set()
+                m_vec, o_vec = _store_diff(
+                    sql_ids,
+                    vs_ids,
+                    valid_orphan_ids=vector_sql_ids,
+                )
 
                 # Check FTS
                 fts = FullTextSearch(engine)
                 try:
                     fts_ids = await fts.list_indexed_ids()
                 except Exception:
-                    fts_ids = set()
-                m_fts = sql_ids - fts_ids if fts_ids else set()
-                o_fts = fts_ids - sql_ids if fts_ids else set()
+                    fts_ids = None
+                m_fts, o_fts = _store_diff(sql_ids, fts_ids)
 
                 await engine.dispose()
                 return m_vec, o_vec, m_fts, o_fts
@@ -453,10 +476,10 @@ def _run_repo_checks(repo_path: _DoctorPath, repair: bool) -> bool:
                         from repowise.core.persistence.models import Page
 
                         rows = await session.execute(
-                            select(Page).where(Page.page_id.in_(list(missing_from_fts)))
+                            select(Page).where(Page.id.in_(list(missing_from_fts)))
                         )
                         for page in rows.scalars().all():
-                            await fts.index(page.page_id, page.title, page.content)
+                            await fts.index(page.id, page.title, page.content)
                             repaired += 1
                 for pid in orphaned_fts:
                     await fts.delete(pid)
@@ -482,11 +505,11 @@ def _run_repo_checks(repo_path: _DoctorPath, repair: bool) -> bool:
                             from repowise.core.persistence.models import Page
 
                             rows = await session.execute(
-                                select(Page).where(Page.page_id.in_(list(missing_from_vector)))
+                                select(Page).where(Page.id.in_(list(missing_from_vector)))
                             )
                             for page in rows.scalars().all():
                                 await vs.embed_and_upsert(
-                                    page.page_id,
+                                    page.id,
                                     page.content,
                                     {
                                         "title": page.title,

@@ -367,13 +367,13 @@ class _GenerationRun:
         # embedder round-trip and the level drains before the next level's RAG
         # search runs, so there is no freshness regression.
         embed_items: list[tuple[str, str, dict]] = []
+        page_timeout = getattr(getattr(self, "config", None), "page_timeout_seconds", None)
 
         async def guarded_named(page_id: str, coro: Any) -> Any:
             try:
                 async with self.semaphore:
-                    timeout = self.config.page_timeout_seconds
-                    if timeout is not None and timeout > 0:
-                        result = await asyncio.wait_for(coro, timeout=timeout)
+                    if page_timeout is not None and page_timeout > 0:
+                        result = await asyncio.wait_for(coro, timeout=page_timeout)
                     else:
                         result = await coro
 
@@ -398,10 +398,9 @@ class _GenerationRun:
                         embed_items.append(_embed_item(result))
                 return result
             except Exception as exc:
-                timeout = self.config.page_timeout_seconds
                 error = (
-                    f"timed out after {timeout:g}s"
-                    if isinstance(exc, TimeoutError) and timeout is not None
+                    f"timed out after {page_timeout:g}s"
+                    if isinstance(exc, TimeoutError) and page_timeout is not None
                     else str(exc)
                 )
                 if self.job_system is not None and self.job_id is not None:

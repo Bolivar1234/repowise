@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from repowise.cli.commands.doctor_cmd import _decision_vector_ids
+from repowise.cli.commands.doctor_cmd import _decision_vector_ids, _store_diff
 from repowise.core.analysis.decisions.semantic_match import DECISION_VECTOR_PREFIX
 from repowise.core.persistence.database import init_db
 from repowise.core.persistence.models import DecisionRecord
@@ -151,6 +151,33 @@ async def test_genuine_orphan_still_detected():
     finally:
         await session.close()
         await engine.dispose()
+
+
+def test_store_diff_treats_empty_store_as_missing():
+    missing, orphaned = _store_diff({"file_page:a.py"}, set())
+
+    assert missing == {"file_page:a.py"}
+    assert orphaned == set()
+
+
+def test_store_diff_treats_unavailable_store_as_unknown():
+    missing, orphaned = _store_diff({"file_page:a.py"}, None)
+
+    assert missing == set()
+    assert orphaned == set()
+
+
+def test_store_diff_allows_decision_vectors_as_valid_orphans():
+    decision_id = f"{DECISION_VECTOR_PREFIX}abc"
+
+    missing, orphaned = _store_diff(
+        {"file_page:a.py"},
+        {"file_page:a.py", decision_id},
+        valid_orphan_ids={"file_page:a.py", decision_id},
+    )
+
+    assert missing == set()
+    assert orphaned == set()
 
 
 @pytest.mark.asyncio

@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import pytest
 
+from repowise.core.persistence.vector_store._base import EMBED_TEXT_MAX_CHARS
 from repowise.core.persistence.vector_store.in_memory import InMemoryVectorStore
 from repowise.core.persistence.vector_store.lancedb_store import (
     _page_ids_in_filter,
     _paths_in_filter,
 )
-from repowise.core.persistence.vector_store._base import EMBED_TEXT_MAX_CHARS
 from repowise.core.persistence.vector_store.pgvector_store import (
     PgVectorStore,
     _summary_payload,

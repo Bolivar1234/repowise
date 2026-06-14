@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from repowise.cli.commands import reindex_cmd
 from repowise.core.persistence.vector_store._base import EMBED_TEXT_MAX_CHARS, iter_embed_chunks
@@ -76,8 +76,8 @@ def _reindex_sessionmaker(*_args: object, **_kwargs: object):
 
 
 class _RecordingVectorStore:
-    calls: list[list[tuple[str, str, dict]]] = []
-    embedded_text_lengths: list[int] = []
+    calls: ClassVar[list[list[tuple[str, str, dict]]]] = []
+    embedded_text_lengths: ClassVar[list[int]] = []
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         type(self).calls = []

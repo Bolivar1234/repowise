@@ -272,8 +272,8 @@ class _GenerationRun:
         layer_page_count = 0
         if self.kg_ctx.available:
             layer_page_count = sum(
-                1 for l in self.kg_ctx.get_layers()
-                if len([n for n in l.get("nodeIds", []) if n.startswith("file:")]) >= 3
+                1 for layer in self.kg_ctx.get_layers()
+                if len([n for n in layer.get("nodeIds", []) if n.startswith("file:")]) >= 3
             )
         estimated_total = (
             counts["api_contract"]
@@ -392,7 +392,7 @@ class _GenerationRun:
                     if self.on_page_ready is not None:
                         try:
                             self.on_page_ready(result)
-                        except Exception as exc:  # noqa: BLE001
+                        except Exception as exc:
                             log.debug("on_page_ready.failed", error=str(exc))
                     if self.vector_store is not None:
                         embed_items.append(_embed_item(result))
